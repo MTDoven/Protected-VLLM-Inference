@@ -44,8 +44,6 @@ Model-specific features and performance must be verified during adaptation. Exis
 
 ## Protection scope
 
-The default target is passive inspection of deployment files and server CPU memory **after trusted startup**. The client, provisioning environment, and startup process must be trusted. GPU memory/register inspection, driver attacks, and active runtime tampering require a stronger, separately validated design.
-
 Token permutation and EtC are not general-purpose cryptographic encryption. See the [security boundary](references/architecture.md) before choosing this approach.
 
 ## Details
