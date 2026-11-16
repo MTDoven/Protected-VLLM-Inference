@@ -69,6 +69,19 @@ Minimum capabilities include tokenizers, restricted template execution, array pe
 
 The client bundle contains public tokenizer/config/template/processor specifications plus a private seed file with mode 0600 and restricted parent-directory permissions. Reject symlinked secret files and overly broad permissions. Transfer seeds through a trusted channel only to trusted clients; do not include them in server images, Git, or public test packages.
 
+Install these assets in `CLIENT_ROOT/bundle/`, or the documented directory actually loaded by the client, before handoff. A bundle retained only in `WORK_ROOT`, a staging candidate, or a script that will generate it later is not client delivery. The inventory must cover the following resources; filenames may differ when the runtime uses a documented equivalent:
+
+| Resource | Typical files |
+| --- | --- |
+| Complete tokenizer vocabulary, merges and tokenization rules | `tokenizer.json`, or equivalent model-specific tokenizer resources |
+| Special-token settings and exact chat template | `tokenizer_config.json`, `chat_template.jinja` |
+| Image preprocessing specifications for supported image input | `preprocessor_config.json` |
+| Private transformation seed and matching profile metadata | `private.json` or a private seed file, plus profile configuration |
+
+Derive or export these files from the actual model resources and accepted transformation seed. Do not copy another model's tables or add unused JSON files just to match its directory listing. Verify that the real client loads the delivered representation and that any duplicate representations agree.
+
+Bundle generation and installation are independent of the server unlock password. If manual password entry is still needed to seal server parameters, deliver and validate the client assets first and report only the remaining server steps as pending. Later provisioning must reuse the delivered seed/profile, verify compatibility, and preserve the bundle; reject a conflicting existing bundle instead of silently overwriting or rotating it. Installation failure and rollback must restore any previously delivered client assets.
+
 For output handling, validate transformed-ID ranges, apply the inverse permutation, and append original tokens while preserving required special markers. Incremental decoding must handle UTF-8 across token boundaries and tokenizer cleanup rules, flush at the end, and avoid dropped characters or erroneous fallback output. If repeatedly decoding all tokens and printing the new suffix cannot guarantee prefix stability, implement the tokenizer's appropriate streaming strategy.
 
 An optional continuous `example.sh` may alternate text, single-image, and two-image requests over one connection. Implement correct cancellation, finite-run exit status, reconnect backoff, request/first-token timing, and success/failure counts. Use locally generated synthetic images instead of machine-specific images/dependencies. Do not save input/output logs by default or search for a particular password file. Only when explicitly requested with a supplied source may the test controller read an existing password file; never create a new plaintext copy.

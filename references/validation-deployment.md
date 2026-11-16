@@ -30,6 +30,8 @@ Compare first-layer/visual outputs numerically between the trusted ordinary mode
 
 Cover incorrect certificate pins, profile/version mismatches, failed/timed-out authentication, replayed nonces, incorrect blob lengths, out-of-range tokens, decompression bombs, invalid patch orders, overlapping placeholders, cancellation, disconnects, and reconnects. Confirm that the actual client neither loads GPU software nor invokes a model.
 
+Validate the delivered bundle from the actual `CLIENT_ROOT`, then from a client-only copy without access to `WORK_ROOT` or original checkpoints. Load it through the real CPU client, verify its inventory, file permissions and profile against the accepted server candidate, and compare tokenization, template rendering, token/pixel transformations and response decoding with the validated reference. Cover text/history and each supported image mode. Fix public per-request randomness only in the comparison harness when byte equality is required. Record the delivered paths, artifact hashes and results. Passing against a staging bundle alone, or merely finding JSON files, does not establish a complete client delivery.
+
 Measure timestamps and bytes for every application frame in both directions and calculate peaks over any rolling second. Include large images, concurrency, handshakes, retries, and reconnects. State whether overhead is included and which connections share the quota. If a network-layer cap is required, measure total interface traffic separately.
 
 ### Disk and memory boundaries
@@ -66,11 +68,11 @@ Apply the user's budget per scenario. The default target of at most 10% for each
 
 ## Deployment transaction
 
-1. Build the candidate in `WORK_ROOT`, fully verify parameters, and run real functional tests. Record source versions and candidate-file hashes.
+1. Build the candidate in `WORK_ROOT`, fully verify parameters, and run real functional tests. Prepare the matching client bundle independently of the production unlock password. Record source versions and candidate-file hashes.
 2. Acquire a deployment lock for the actual `SERVER_ROOT`. Check for user modifications, running services, and available storage. Perform already authorized shutdowns/switches directly. If downtime is not authorized, prepare a complete reviewable result before asking for a specific window.
 3. Back up old parameters, code, configuration, launchers, and required runtime components in the trusted work directory. Preserve TLS and existing client-bundle compatibility. Backup placement must satisfy the threat model; renaming a directory is insufficient.
-4. Use atomic rename within a filesystem. Across filesystems, copy and verify first. Record each step and support restoring all old contents if any step fails. Do not roll back only models while leaving the new loader installed.
-5. Update the actual server's model root, plugins, launcher, dependency entry points, and configuration. Start from the real entry point, unlock manually, and run client text/image, authentication, and cancellation smoke tests. Confirm the service actually loads the new package.
+4. Use atomic rename within a filesystem. Across filesystems, copy and verify first. Install or verify the complete matching bundle in the actual `CLIENT_ROOT`; preserve existing client assets until the authorized switch. For a new deployment, deliver password-independent client assets even if server sealing must wait for manual input. Record each step and support restoring all old contents if any step fails. Do not roll back only models while leaving the new loader installed.
+5. Update the actual server's model root, plugins, launcher, dependency entry points, and configuration. Verify that provisioning preserves the already delivered client seed/profile. Start from the real entry point, unlock manually, and run text/image, authentication, and cancellation smoke tests using the delivered client directory. Confirm the service actually loads the new package.
 6. Leave the service running or stop test services as requested, recording port/process state. Do not silently leave multiple test services running or alter unrelated processes.
 
 For rollback, stop the relevant service, restore matching models/code/config/runtime, verify the original profile/client compatibility, and restart with manual unlocking. Test a complete rollback in an isolated copy and retain transaction records on failure. Do not delete backups without authorization.
@@ -80,3 +82,5 @@ For rollback, stop the relevant service, restore matching models/code/config/run
 To migrate a client, copy code, lock files, the protected bundle, and connection templates; rebuild `.venv` instead of copying the old virtual environment. For the server, rebuild native modules for the target machine, update dynamic dependencies and device settings, and preserve the parameter format. Compiled artifacts are not universally portable between machines.
 
 Final acceptance evidence must include supported adaptations and limitations, whether the profile changed, whether the data key was rewrapped, the sensitive-tensor set and byte count, indices/file layout, functional/cryptographic/disk/memory/bandwidth/performance results, actual deployment-switch status, backup/recovery procedures, test-service state, and the effective protection boundary. Do not present historical machine details, fixed model sizes, or old passing figures as new deployment results.
+
+Record client-bundle installation, server-parameter installation and running-service status independently. If manual production-password entry remains pending, identify that specific remaining step while still delivering the validated client assets. Do not mark the client complete while its bundle exists only in staging or depends on a future server-provisioning command.
