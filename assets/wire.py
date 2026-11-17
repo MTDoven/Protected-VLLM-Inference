@@ -8,7 +8,7 @@ import math
 import struct
 import time
 
-VERSION = 2
+VERSION = 3
 PROFILE_VERSION = 1
 RATE = 5_000_000
 CHUNK = 60_000
@@ -25,11 +25,10 @@ def derive(password, salt):
                           r=8, p=1, dklen=32, maxmem=64 * 1024 * 1024)
 
 
-def proof(key, nonce, profile):
-    if len(key) != 32 or len(nonce) != 32 or not isinstance(profile, str) or not profile:
-        raise ValueError('Invalid authentication parameters')
-    return hmac.new(key, b'private-v2\0' + nonce + profile.encode('utf-8'),
-                    hashlib.sha256).hexdigest()
+def proof(key, nonce, profile, image_transport):
+    if len(key)!=32 or len(nonce)!=32 or len(profile)!=64:raise ValueError('Invalid authentication parameters')
+    context=json.dumps(image_transport,sort_keys=True,separators=(',',':'),ensure_ascii=True,allow_nan=False).encode('ascii')
+    return hmac.new(key,b'private-v3\0'+nonce+profile.encode('ascii')+hashlib.sha256(context).digest(),hashlib.sha256).hexdigest()
 
 
 def _object(pairs):

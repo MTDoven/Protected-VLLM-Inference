@@ -2,9 +2,9 @@
 
 ## Purpose and use cases
 
-Protect text and images uploaded to an existing vLLM server, without retraining the model or running model inference on the client.
+Protect text and images uploaded to an existing vLLM or llama.cpp server, without retraining the model or running model inference on the client.
 
-Use this skill when you already have a working vLLM deployment and want a matching CPU-only client, protected input processing, and encrypted sensitive parameters. The server continues generating independently, without per-token client round trips.
+Use this skill when you already have a working vLLM or llama.cpp deployment and want a matching CPU-only client, protected input processing, and encrypted sensitive parameters. The server continues generating independently, without per-token client round trips.
 
 This is a Codex skill with reference code. Codex adapts and validates the implementation for your model and machine.
 
@@ -36,7 +36,7 @@ Give Codex access to the target machine and state whether the service is running
 
 ## What you get
 
-- A server using COVERT-style text transformations, EtC image processing, and device-side decryption of sensitive parameters.
+- A server using COVERT-style text transformations, EtC image processing, client-to-device authenticated image encryption, and device-side decryption of sensitive parameters.
 - A CPU-only client with TLS, manual startup passwords, and a default combined application traffic limit of 10 MB/s per client instance.
 - A validated deployment, client setup instructions, backups, and a rollback procedure.
 
@@ -45,6 +45,8 @@ Model-specific features and performance must be verified during adaptation. Exis
 ## Protection scope
 
 Token permutation and EtC are not general-purpose cryptographic encryption. See the [security boundary](references/architecture.md) before choosing this approach.
+
+The v3 image path encrypts the EtC RGB data and secret patch order together on the client. The server CPU handles ciphertext and public geometry; only the GPU authenticates/decrypts the payload, processes images and retains image-bearing intermediates through sampling. This closes the clear EtC/public-order statistical reconstruction path without reconstructing original image buffers. It does not protect against GPU/driver inspection or active host tampering. A breaking v3 upgrade requires updating the client; provide a self-contained change guide when it is maintained on another machine.
 
 ## Details
 

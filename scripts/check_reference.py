@@ -2,6 +2,7 @@
 import asyncio
 from collections import deque
 import json
+import hashlib
 from pathlib import Path
 import struct
 import sys
@@ -16,6 +17,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'assets'))
 import wire
+import image_transport
 import inspect_checkpoint as checkpoint
 import sealed_format as sealed
 
@@ -86,7 +88,8 @@ class FormatChecks(unittest.TestCase):
             wire.derive('short', salt)
         nonce = bytes(32)
         auth_key = wire.derive(password, salt)
-        self.assertNotEqual(wire.proof(auth_key, nonce, 'a'), wire.proof(auth_key, nonce, 'b'))
+        transport=image_transport.negotiation(bytes(16),'minicpm',1)
+        self.assertNotEqual(wire.proof(auth_key, nonce, 'a'*64,transport), wire.proof(auth_key, nonce, 'b'*64,transport))
 
 
 class AlgebraChecks(unittest.TestCase):
@@ -132,7 +135,7 @@ class AlgebraChecks(unittest.TestCase):
         np.testing.assert_allclose((projection @ transform.T) @ (transform @ feature),
                                    projection @ feature, atol=1e-12)
 
-    def test_etc_affine_and_public_order(self):
+    def test_etc_affine_and_secret_order(self):
         random = np.random.default_rng(915)
         width, count = 27, 12
         pixels = random.integers(0, 256, size=(width, count)).astype(np.float64)
@@ -232,6 +235,32 @@ class InspectionChecks(unittest.TestCase):
                 checkpoint.member(root, 'linked', {'bkp'})
             with self.assertRaises(ValueError):
                 checkpoint.inspect(root, ['target=index.json'], {'bkp'}, True)
+
+
+
+
+class ImageEnvelopeChecks(unittest.TestCase):
+    def test_public_v3_vector(self):
+        v=json.loads((Path(__file__).resolve().parents[1]/'assets/image_v3_test_vector.json').read_text())
+        t=v['image_transport'];password=v['password'].encode();profile=v['profile']
+        key=hashlib.scrypt(password,salt=image_transport.image_kdf_salt(bytes.fromhex(t['salt']),profile),n=32768,r=8,p=1,dklen=32,maxmem=64*1024*1024)
+        auth=wire.derive(v['password'],bytes.fromhex(v['auth_salt']))
+        tokens=struct.pack('<III',*v['token_ids']);nonce=bytes.fromhex(v['nonce_hex'])
+        aad=image_transport.image_aad(bytes.fromhex(v['challenge']),profile,tokens,0,0,v['descriptor'])
+        payload=bytes((29*i+7)%256 for i in range(28*28*3))+struct.pack('<IIII',*v['patch_order'])
+        envelope=nonce+AESGCM(key).encrypt(nonce,payload,aad)
+        self.assertEqual(key.hex(),v['image_key_hex'])
+        self.assertEqual(wire.proof(auth,bytes.fromhex(v['challenge']),profile,t),v['auth_proof'])
+        self.assertEqual(hashlib.sha256(aad).hexdigest(),v['aad_sha256'])
+        self.assertEqual(len(envelope),v['envelope_bytes'])
+        self.assertEqual(hashlib.sha256(envelope).hexdigest(),v['envelope_sha256'])
+        meta={'type':'generate','version':3,'profile':profile,'images':[v['descriptor']],'sampling':{'max_tokens':1}}
+        manifest={'profile':profile,'vocab':100,'specials':{'image_token_id':88}}
+        args=(manifest,'minicpm',bytes.fromhex(v['challenge']),1)
+        self.assertEqual(image_transport.bind_request(meta,[tokens,envelope],*args,1)[1],2)
+        with self.assertRaises(ValueError):image_transport.bind_request(meta,[tokens,envelope],*args,2)
+        with self.assertRaises(ValueError):image_transport.bind_request(dict(meta,version=2),[tokens,envelope],*args,1)
+        with self.assertRaises(InvalidTag):AESGCM(key).decrypt(nonce,envelope[12:],aad+b'x')
 
 
 if __name__ == '__main__':

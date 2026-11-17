@@ -18,6 +18,8 @@ models/
 
 Names indicate roles only; preserve framework identifiers required to load the actual model. Use the real loader's consumption inventory to remove training optimizers, statistics/debug tables, duplicated weights, and unused metadata. Do not reuse another model's tensor-name blacklist.
 
+The layout above illustrates safetensors. For GGUF deployments, retain the model and visual-projector containers required by the native loader, seal sensitive tensor byte ranges without changing their declared storage layout, and validate offsets, alignment and lengths. Remove original tokenizer strings from serving metadata. The safetensors inspector does not validate GGUF; use a format-aware inventory and loader check.
+
 Version the wire protocol, profile, layout, and sealed format independently. Public fields include `profile`, `vocab`, remapped specials, role indices, image specifications, and `complete`; the sealed section uses the format below. Initially write `complete=false`, then atomically mark the package complete after successful validation.
 
 ## Sealed format
@@ -62,17 +64,19 @@ model_salt = random_16_bytes || ASCII("model-unlock-v1") || zero_byte
 K_wrap     = scrypt(password_utf8, model_salt, configured_parameters)
 wrapped    = AES256GCM(K_wrap, random_nonce, K_data, UTF8(package))
 K_auth     = scrypt(password_utf8, fresh_auth_salt_16_bytes, auth_parameters)
+K_image    = scrypt(password_utf8, ASCII("private-image-v3") || zero_byte
+                    || fresh_image_salt_16_bytes || ASCII(profile), image_parameters)
 ```
 
-`K_data` is a random key, not `K_auth` or the data-transformation seed. Separate salts/domains separate purposes, but the same password still protects both uses; do not claim independent cryptographic factors. Enforce at least 6 characters using consistent Unicode encoding rules. Leading/trailing spaces belong to the password; remove only the terminal line ending.
+`K_data` is a random key, not `K_auth`, `K_image` or the data-transformation seed. Separate salts/domains separate purposes, but the same password still protects these uses; do not claim independent cryptographic factors. Image parameters are scrypt `N=32768,r=8,p=1,dkLen=32,maxmem=64MiB` for v3. A fresh image salt/key is generated on every complete server startup, without rewriting the model checkpoint or rotating the existing transformation profile. Enforce at least 6 characters using consistent Unicode encoding rules. Leading/trailing spaces belong to the password; remove only the terminal line ending.
 
 ## Short-lived native bootstrap
 
 1. The Python launcher must not receive the plaintext password. Start a native helper that reads hidden terminal input and restores terminal settings on errors, signals, and exit.
 2. Use dedicated locked, nondumpable buffers and check that these protections succeed. Avoid immutable Python strings and implicit logging/debug serialization. Use erasure that the compiler cannot optimize away.
-3. Derive authentication material and the unlock key. Authenticate and unwrap `K_data`; exit before engine startup if this fails. Audit the derivation library's temporary allocations too, and terminate the helper when finished to release the whole process.
-4. Send only `auth_salt || K_auth` through an inherited anonymous pipe to the gateway. Parameter data keys must not pass through Python, argv, environment variables, configuration, or disk.
-5. Establish a restricted local native channel. Send `K_data` only to expected workers created by this launcher, using peer credentials and actual PID/process relationships, and prevent duplicate claims. Matching only the UID does not resist active same-user attacks; restrict recipients precisely even within the trusted-startup boundary.
+3. Derive authentication material, the unlock key and the separately salted/domain-derived `K_image`. Authenticate and unwrap `K_data`; exit before engine startup if this fails. Audit the derivation library's temporary allocations too, and terminate the helper when finished to release the whole process.
+4. Send only `auth_salt || K_auth || image_salt` through an inherited anonymous pipe to the gateway. This v3 material is 64 bytes. Parameter/image keys must not pass through Python, argv, environment variables, configuration, or disk.
+5. Establish a restricted local native channel. Send the 64-byte `K_data || K_image` only to expected workers created by this launcher, using peer credentials and actual PID/process relationships, and prevent duplicate claims. Matching only the UID does not resist active same-user attacks; restrict recipients precisely even within the trusted-startup boundary.
 6. After every expected worker acknowledges device provisioning and CPU-buffer erasure, wipe and exit the helper and remove the channel. Keep no long-lived CPU key broker.
 7. Worker failure or replacement requires a full restart and another manual unlock. The launcher must not resend keys from files, environment variables, or regenerated plaintext caches. Multiprocess failures, timeouts, and cancellation must clean up all child processes and channels.
 
@@ -82,11 +86,13 @@ A short host-to-device copy may be inlined by the driver into a CPU command buff
 
 Prefer **device pull** on supported platforms:
 
-1. A native receiver reads the key into a locked/DONTDUMP buffer aligned to the system page size.
+1. A native receiver reads both keys into a locked/DONTDUMP buffer aligned to the system page size.
 2. Register the host page for device access and obtain its device alias.
 3. A small kernel reads the mapped host page and writes the key into a device raw-key allocation.
 4. Synchronize kernel completion, unregister the mapping, explicitly erase the host page, and send an acknowledgement.
 5. Expand the key schedule and initialize authentication state on the device, then erase the raw-key allocation. Retain only the device's expanded key afterward.
+
+Authenticate each image envelope on the GPU before decoding its EtC bytes or using its order. Validate the order on the device and release/wipe per-request buffers on completion, cancellation and error. Keep features, encoder caches and logits on the device through sampling; native bindings should return opaque feature handles and sampled transformed IDs. A backend that would fall back to CPU processing must reject that branch. If model-forward exceptions terminate an entire engine, perform device-only image authentication/permutation preflight outside model execution and report a boolean status before scheduling it.
 
 This is not proof of zero residue on every backend/driver. Independently scan CPU processes after startup using synthetic random keys, including driver buffers and allocators. If the platform lacks support or the audit fails, do not silently revert to ordinary copying and declare success.
 

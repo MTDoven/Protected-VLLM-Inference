@@ -1,0 +1,56 @@
+{
+  "purpose": "public synthetic interoperability vector; never a production credential",
+  "password": "public-test-password",
+  "profile": "0000000000000000000000000000000000000000000000000000000000000000",
+  "auth_salt": "101112131415161718191a1b1c1d1e1f",
+  "challenge": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "image_transport": {
+    "format": "etc-rgb-u8-q-le32-v1",
+    "cipher": "AES-256-GCM",
+    "salt": "000102030405060708090a0b0c0d0e0f",
+    "kdf": {
+      "name": "scrypt",
+      "n": 32768,
+      "r": 8,
+      "p": 1,
+      "length": 32
+    },
+    "nonce_prefix": "0000000000000001",
+    "layout": "minicpm",
+    "patch_size": 14
+  },
+  "descriptor": {
+    "offset": 1,
+    "length": 2,
+    "grid": [
+      0,
+      0
+    ],
+    "tiles": [
+      {
+        "width": 28,
+        "height": 28,
+        "suffix": 1,
+        "tokens": 2
+      }
+    ]
+  },
+  "token_ids": [
+    7,
+    88,
+    88
+  ],
+  "pixel_pattern": "RGB HWC byte i = (29*i+7) % 256, for 28*28*3 bytes",
+  "patch_order": [
+    2,
+    0,
+    3,
+    1
+  ],
+  "image_key_hex": "4e6977f711ab7fe467dda717a566d163dbff0c904ec5058225ff84045cb089c9",
+  "auth_proof": "055af8dc33b67b66774299c7bedf9ea610331b2087548e8aaa91ce3333e7a262",
+  "nonce_hex": "000000000000000100000001",
+  "aad_sha256": "cc2447f8aba5a28ee3559abc42a02b16d0b65120d01b5976a70c2ca47b3b440b",
+  "envelope_bytes": 2396,
+  "envelope_sha256": "0b5677a6112f7f7e76373e8517206e87ce63ca1941fa7b69374b399dc04b3e63"
+}

@@ -2,12 +2,15 @@
 
 ## Validation layers
 
-The included CPU synthetic checks validate only reference formats and algebra, not the target model or device implementation. Every new model/machine requires the acceptance work below. Keep results in `WORK_ROOT`; do not retain documentation or test artifacts in the server directory.
+The included CPU synthetic checks validate only reference formats and algebra, not the target model or device implementation. Every new model/machine requires the applicable acceptance work below. Keep results in `WORK_ROOT`; do not retain documentation or test artifacts in the server directory. Classify each check as passed, failed, not run, or not applicable with evidence; requirements listed here are not claims that a deployment has passed them.
+
+Numerical comparisons that inspect plaintext tensors or logits belong only in isolated trusted fixtures. Never enable a diagnostic CPU export in serving code to run them; independently audit the installed production path.
 
 ### Formats, passwords, and cryptography
 
 - Test AES-256-GCM against public known-answer vectors and an independent established implementation. Cover empty messages, non-block-aligned lengths, complete chunks, and final partial chunks.
 - Tampering with ciphertext, tags, AAD, shapes, roles, ordinals, chunk order, package identity, wrapped keys, or passwords must fail. Test incomplete packages, repeated nonces, missing sensitive records, and out-of-range indices.
+- A malformed authenticated image or invalid permutation must reject the request and allow a subsequent valid request. If an encoder exception would kill the whole backend, authenticate/validate on the device before submitting model work and return only status to the gateway.
 - Compare GPU results byte for byte with the reference. Test actual streams and graph capture, not just CPU helpers.
 - Reject incorrect passwords before engine startup and reject short passwords. Restore terminal echo after success, failure, and cancellation.
 - Eliminate old plaintext-parameter bypasses; online loaders must reject unsealed input. Verify complete parameter byte counts, dtypes, and shapes through packaging/unpacking, retaining plaintext checksums only on the trusted audit side.
@@ -26,9 +29,11 @@ Generate reproducible synthetic images with asymmetric shapes, different colors,
 
 Compare first-layer/visual outputs numerically between the trusted ordinary model and protected path. Validate positional encoding, windows, merger, and special branches. Report OCR, color, detail, and left/right/up/down results separately. Fix and record normalization, resize/crop, permutation RNG, and quantization tolerances.
 
+For v3, compare independent CPU AEAD/normalization references with the actual GPU implementation, including tags/AAD/nonces, incomplete envelopes, invalid secret permutations and cross-request binding. Test repeated images with new counters, replay across and within connections, concurrent clients and restart nonce/key separation. Add statistical reconstruction and repeated-image linkage attacks against captured serving CPU artifacts; preserving no literal original pixels is not sufficient. Report the public geometry, length, timing and output-ID leakage that remains. Test GPU sampling, including greedy ties and temperature/top-p, without host logits/probability extraction in the serving path.
+
 ### Protocol and client
 
-Cover incorrect certificate pins, profile/version mismatches, failed/timed-out authentication, replayed nonces, incorrect blob lengths, out-of-range tokens, decompression bombs, invalid patch orders, overlapping placeholders, cancellation, disconnects, and reconnects. Confirm that the actual client neither loads GPU software nor invokes a model.
+Cover incorrect certificate pins, profile/version mismatches, failed/timed-out authentication, replayed nonces, incorrect blob lengths, out-of-range tokens, oversized geometry, invalid patch orders, overlapping placeholders, cancellation, disconnects, and reconnects. Explicitly reject v2, PNG blobs, clear patch-order fields and compressed wire payloads. Test decoder resource limits locally where the client opens source image files. Confirm that the actual client neither loads GPU software nor invokes a model.
 
 Validate the delivered bundle from the actual `CLIENT_ROOT`, then from a client-only copy without access to `WORK_ROOT` or original checkpoints. Load it through the real CPU client, verify its inventory, file permissions and profile against the accepted server candidate, and compare tokenization, template rendering, token/pixel transformations and response decoding with the validated reference. Cover text/history and each supported image mode. Fix public per-request randomness only in the comparison harness when byte equality is required. Record the delivered paths, artifact hashes and results. Passing against a staging bundle alone, or merely finding JSON files, does not establish a complete client delivery.
 
@@ -44,6 +49,7 @@ Repeat sampling after key injection, model loading, warmup, sustained text/image
 
 - Password encodings, raw `K_data`, `K_wrap`, and CPU key-schedule copies. Authentication verifiers and TLS keys have separate scopes; do not conflate this with a claim that no keys exist anywhere.
 - Complete/partial original token sequences, original UTF-8 text, original pixels, and fingerprints of hash operands, embedding/output rows, visual first-layer parameters, and feature tables that directly recover mappings.
+- EtC RGB/normalized pixels, forward/inverse secret patch order, visual embeddings, image-conditioned logits, and raw/expanded image keys. Include numeric-layout alternatives and known trusted-reference feature fragments; do not restrict the scan to input PNG strings.
 - Pinned memory, mapped regions, driver submission buffers, allocators, CPU fallbacks, interprocess shared memory, compilation/graph caches, logs, core dumps, temporary files, and sensitive files represented in page caches.
 - Simple attacks such as multiplicative-inverse recovery against a sealed hash table must fail. Failure of one attack does not prove that all reconstruction attacks are infeasible.
 
@@ -55,7 +61,9 @@ Separate the effect of converting the ordinary original model into an equivalent
 
 Keep devices, parallel configuration, quantization, memory budget, context length, sampling, output length, inputs, client, and rate windows identical. Do not take over occupied devices without authorization. Use warmup and multiple measurement rounds covering at least short text, long text, single images, and multiple images, both serially and at the target concurrency.
 
-For EtC comparisons, fix the public patch permutation **only in the test harness** and record protected-payload digests to ensure both candidates receive identical bytes. Different random permutations can change floating-point order, output length, and speculative acceptance, confounding the comparison. Do not alter production-client randomness to fix this. Retain initial measurements and the evidence for methodology corrections.
+For EtC comparisons, fix the secret patch permutation **only in the trusted test harness** and record EtC-plaintext digests there to ensure both candidates receive identical model inputs. V3 ciphertext should differ when keys/nonces differ; ciphertext equality is not the comparison target. Different patch permutations can change floating-point order, output length, and speculative acceptance, confounding the comparison. Do not alter production-client randomness or reuse an AEAD nonce to fix this. Retain initial measurements and the evidence for methodology corrections.
+
+If a fixture suppresses EOS to measure a fixed output length, apply it equally to both candidates, disclose it, and verify ordinary stopping separately. Distinguish native-engine throughput from end-to-end TLS/client/traffic-limited throughput. Exact tokens on fixed samples establish regression equivalence for those samples, not general visual quality; report synthetic and natural-image coverage separately.
 
 Report definitions and percentiles for throughput, TTFT, and TPOT, output token counts, speculative acceptance, CPU/GPU utilization, host pinned memory, startup time, and network bytes. State whether authentication/setup time is included. Do not report only the best round.
 
@@ -84,3 +92,5 @@ To migrate a client, copy code, lock files, the protected bundle, and connection
 Final acceptance evidence must include supported adaptations and limitations, whether the profile changed, whether the data key was rewrapped, the sensitive-tensor set and byte count, indices/file layout, functional/cryptographic/disk/memory/bandwidth/performance results, actual deployment-switch status, backup/recovery procedures, test-service state, and the effective protection boundary. Do not present historical machine details, fixed model sizes, or old passing figures as new deployment results.
 
 Record client-bundle installation, server-parameter installation and running-service status independently. If manual production-password entry remains pending, identify that specific remaining step while still delivering the validated client assets. Do not mark the client complete while its bundle exists only in staging or depends on a future server-provisioning command.
+
+For a documentation-only remote-client handoff, validate the protocol with a trusted reference client and report remote-client installation/acceptance as outstanding. Honor a requested stopped final state: verify service/test-process exit, listener closure and release of the assigned GPU allocations without stopping unrelated workloads.

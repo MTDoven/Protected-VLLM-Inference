@@ -1,4 +1,4 @@
 interface:
-  display_name: "Protected vLLM Inference"
-  short_description: "Build protected vLLM servers and CPU-only clients"
+  display_name: "Protected vLLM / llama.cpp Inference"
+  short_description: "Protect vLLM / llama.cpp servers and CPU clients"
   default_prompt: "Use $protect-vllm-inference to adapt the supplied model, machine, server directory, and client directory into a tested protected inference deployment."

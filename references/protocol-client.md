@@ -6,27 +6,36 @@ The server's native bootstrap reads a password of at least 6 characters once by 
 
 Use a binary TLS WebSocket channel. Prefer standard CA/hostname verification, or use a certificate DER SHA256 pin distributed through a trusted channel. In pin mode, perform a constant-time comparison before sending any authentication proof or application data. Disabling CA verification alone is not TLS identity authentication. Distribute certificate updates through a trusted channel and reject an incorrect pin immediately.
 
-Do not carry over a particular machine's URL, port, certificate private key, or pin. Store TLS private keys in restricted server files. Set self-signed certificate validity and rotation according to deployment configuration. Expose only protected application entry points; do not use the existing plaintext API as a fallback.
+For a new deployment, configure its own URL, port, certificate and pin; do not copy unrelated machine identities. During an in-place protocol upgrade, preserve the existing endpoint and TLS identity unless rotation is requested. Store TLS private keys in restricted server files. Set self-signed certificate validity and rotation according to deployment configuration. Expose only protected application entry points; do not use the existing plaintext API as a fallback.
 
-## Compatible wire version 2
+## Wire version 3 and device-only image envelopes
 
 `assets/wire.py` provides the format core. Copy the same version to both endpoints or generate both from one shared build source to prevent drift.
 
 Handshake:
 
 ```text
-server -> challenge {type, version, profile, salt, nonce}
-client -> auth      {type, profile, proof}
+server -> challenge {type, version:3, profile, salt, nonce, image_transport}
+client -> auth      {type, version:3, profile, proof}
 server -> authenticated {type, version}
 ```
 
-`salt` is 16 random bytes generated at server startup; `nonce` is 32 random bytes per connection. Both endpoints derive `K_auth`. The proof is:
+`salt` is 16 random bytes generated at server startup; `nonce` is 32 random bytes per connection, both encoded as hex. `profile` is the matching 64-character ASCII profile identifier. Both endpoints derive `K_auth = scrypt(UTF8(password), salt, N=32768,r=8,p=1,dkLen=32,maxmem=64MiB)`. The proof is encoded as hex:
 
 ```text
-HMAC_SHA256(K_auth, ASCII("private-v2") || zero_byte || nonce || UTF8(profile))
+HMAC_SHA256(K_auth, ASCII("private-v3") || zero_byte || nonce || ASCII(profile)
+            || SHA256(canonical(image_transport)))
 ```
 
 Use each nonce once. Validate types, lengths, profile, and protocol version, and close on authentication timeout. Do not log proofs, passwords, or complete inputs. This mechanism depends on verified TLS; it is not a PAKE and does not resist impersonation after verifier disclosure or offline guessing of weak passwords.
+
+`image_transport` advertises AES-256-GCM, `etc-rgb-u8-q-le32-v1`, a fresh startup image salt, an eight-byte connection nonce prefix, the public layout/patch size and scrypt parameters. Derive `K_image = scrypt(UTF8(password), b"private-image-v3\0" || image_salt || ASCII(profile), N=32768,r=8,p=1,dkLen=32,maxmem=64MiB)`. Here `\0` denotes one zero byte. Only the short-lived native bootstrap and trusted client derive this key on CPU; serving workers retain it only on the GPU. It is independent of `K_auth`, `K_data` and the transformation seed, while still relying on the same password's strength.
+
+Its exact fields are `format`, `cipher`, `salt` (16-byte hex), `nonce_prefix` (8-byte hex), `layout`, `patch_size`, and `kdf={name:"scrypt",n:32768,r:8,p:1,length:32}`. Validate these before running the KDF, including agreement with the local bundle; reject unsupported values instead of accepting server-selected resource costs. Require version 3 in both `challenge` and `authenticated`. Keep image keys in client memory only and discard them on shutdown or rederive them after a server restart.
+
+For each tile, encrypt HWC RGB uint8 EtC bytes followed by little-endian uint32 `q`. The nonce is `connection_prefix[8] || tile_counter_be32`; counters start at one and increase across requests on that connection. Each startup uses a fresh key, connection prefixes are unique for that key, and exhausted counters require reconnecting. Never independently restart a gateway with the old worker keys and a reset prefix counter.
+
+AAD is `b"private-image-v3\0" || challenge_nonce[32] || ASCII(profile) || image_index_le32 || tile_index_le32 || SHA256(token_blob) || SHA256(canonical(image_descriptor))`. Indices start at zero; the descriptor includes the complete image tile list. Canonical JSON sorts keys, uses ASCII escapes and compact separators, and rejects nonfinite values. [The public contract](../assets/image_transport.py) and [synthetic interoperability vector](../assets/image_v3_test_vector.json) are normative for this format. No v2 or clear-image fallback is provided.
 
 ## Message encoding
 
@@ -45,13 +54,15 @@ Reject nonbinary frames, invalid final flags, noninteger or negative byte counts
 Generate metadata and blob layout:
 
 - Metadata includes `type=generate`, `version`, `profile`, `sampling`, and `stop_token_ids`.
-- Each entry in `images` contains the actual grid and prompt offset, ordered by placeholder appearance.
+- Each entry in `images` contains `offset`, `length`, `grid` and `tiles`, ordered by placeholder appearance. Each tile has `width`, `height`, `suffix` and `tokens`. Geometry remains model-specific and public.
 - The first blob contains transformed token IDs as little-endian uint32 values.
-- Each image contributes two further blobs in order: EtC PNG and public patch permutation as little-endian uint32 values.
+- Each tile contributes one envelope blob: 12-byte nonce followed by ciphertext and the 16-byte GCM tag. Raw RGB and secret order are inside it; the plaintext size is exactly `3*width*height + 4*patch_count`.
 - Responses use `tokens` with a transformed-ID blob and `done` with a finish reason. Errors expose only stable error codes, not full exceptions or input values.
-- `cancel` interrupts the active request; send `cancelled` after engine abort completes. Disconnects also abort. By default, allow one active request per connection and return `Busy` for a second request.
+- `cancel` carries version 3 and profile, no blobs, and interrupts the active request; send `cancelled` after engine abort completes. Disconnects also abort. By default, allow one active request per connection and return `Busy` for a second request. Consume counters for received envelopes even when requests are busy; cancelled/failed sends require reconnecting so the endpoints cannot disagree about counters.
 
-Use random neutral request IDs, not IDs derived from original inputs. Context limits include expanded image tokens and output tokens. Sampling values must be finite and within supported ranges; stop IDs must fit the vocabulary. Do not pass unknown user metadata directly into the engine.
+The supplied geometry validator supports `minicpm` (patch 14, merge 2, `grid=[gx,gy]`, one overview plus up to nine slices) and `qwen` (patch 16, merge 2, `grid=[1,Hpatch,Wpatch]`, one tile). Qwen temporal duplication occurs only on the device. Exact suffix/token-count rules and size limits are in `assets/image_transport.py`; these are implemented layouts, not defaults for every model. A new geometry requires a coordinated, validated contract change.
+
+The gateway assigns random neutral request IDs; clients must not add unsupported request fields. Context limits include expanded image tokens and output tokens. The supplied validator defaults to 32,768 total tokens, permits 1–32,767 output tokens, temperature 0–2 and top_p 0.0001–1, and accepts at most 64 stop IDs within the vocabulary. A backend may supply a different context limit; align the client with its actual configuration. Do not pass unknown user metadata directly into the engine.
 
 ## Defining the 10 MB/s limit correctly
 
@@ -65,7 +76,7 @@ The application-byte budget excludes TLS/WebSocket/TCP/IP framing, retransmissio
 
 ## CPU client
 
-Minimum capabilities include tokenizers, restricted template execution, array permutations, Pillow or an equivalent image library, and TLS/WebSocket. Generate a reproducible lock file for the actual implementation and install into the client's `.venv`. Do not install vLLM, GPU torch, device runtimes, or vision models. Hiding devices is only an auxiliary measure; dependencies and runtime calls must establish that no GPU computation occurs.
+Minimum capabilities include tokenizers, restricted template execution, array permutations, Pillow or an equivalent image library, a standard AES-GCM implementation, scrypt, and TLS/WebSocket. Generate a reproducible lock file for the actual implementation and install into the client's `.venv`. Do not install vLLM, GPU torch, device runtimes, or vision models. Hiding devices is only an auxiliary measure; dependencies and runtime calls must establish that no GPU computation occurs.
 
 The client bundle contains public tokenizer/config/template/processor specifications plus a private seed file with mode 0600 and restricted parent-directory permissions. Reject symlinked secret files and overly broad permissions. Transfer seeds through a trusted channel only to trusted clients; do not include them in server images, Git, or public test packages.
 
@@ -91,3 +102,5 @@ An optional continuous `example.sh` may alternate text, single-image, and two-im
 Document supported OS/Python versions, creating `.venv` in a clean environment, dependency locking, the copy list and exclusions for `.venv`/caches, trusted bundle transfer, URL and certificate-pin configuration, manual password entry, text/image/multi-image/history usage, loop tests, cancellation and errors, traffic accounting, and protection boundaries.
 
 Ordinary client deployment does not require the original model checkpoint or offline provisioning-tool dependencies. If provisioning tools are retained, label them separately as trusted offline provisioning so users do not infer that every client needs model weights.
+
+When the client is on another machine and only a handoff is requested, provide a self-contained `client_edit.md`: preserve the existing bundle/seed/profile and preprocessing, specify handshake/KDF/proof, encrypted payload/AAD/nonce lifecycle, request/cancel fields, limits and rejection behavior, and include the public synthetic vector plus tests for both intended backends. Do not claim that writing this guide installs or validates the remote client. V3 servers require that client upgrade before image or text requests can connect.

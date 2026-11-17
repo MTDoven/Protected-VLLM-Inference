@@ -6,7 +6,7 @@ Start with the user-specified entry point, launch scripts, configuration, projec
 
 Record the following in the trusted work directory:
 
-1. Actual Python, vLLM, and model implementation versions, registration mechanism, entry point, and supported features. Inspect installed code first and use official documentation for version checks; do not assume current online documentation matches the target environment.
+1. Actual Python/native runtime, vLLM or llama.cpp revision, and model implementation versions, registration mechanism, entry point, and supported features. Inspect installed code first and use official documentation for version checks; do not assume current online documentation matches the target environment.
 2. Every checkpoint tensor's consumers, shape, dtype, sharding, quantization parameters, aliases, vocabulary size/padding, tied-weight status, extra heads, adapters, and draft roles.
 3. All token-ID consumers: embeddings, hashes, routing, sampling filters, termination rules, caches, constrained decoding, templates, tool parsers, and reasoning parsers.
 4. Image processor behavior: EXIF, color handling, resize/crop, pixel limits, patch/merge/temporal dimensions, normalization, convolution input layout, positional/rotary encodings, windows, interpolation, deeper visual branches, and merger.
@@ -34,15 +34,17 @@ Create a neutrally named adapter module in the target project. Concentrate frame
 | `transform_vision` | Pixel-transformation specification, folded first-layer parameters, and spatial-position rules |
 | `sensitive_tensors` | Per-role sealing dependency closure and justification; an empty match must not silently pass |
 | `load_sealed` | Role-aware ciphertext loading and device authentication/decryption without a plaintext CPU iterator |
-| `build_input` | Engine inputs constructed directly from protected tokens and processed images |
+| `build_input` | Engine inputs constructed from protected tokens, image ciphertext and public descriptors; plaintext image intermediates stay on the device |
 | `generate` | Autonomous generation and streaming in transformed-ID space |
 | `validate` | Architecture-specific equivalence, negative, memory, and performance checks |
 
-Use vLLM general plugins or model-registration extensions. Ensure activation in every worker and idempotent repeated installation. Do not use an IO plugin limited to another task type for an ordinary generative model. If precise patches to a pinned version are necessary, verify class/function signatures and fail startup on mismatch. [vLLM plugin documentation](https://docs.vllm.ai/en/stable/design/plugin_system/)
+For vLLM, use general plugins or model-registration extensions. Ensure activation in every worker and idempotent repeated installation. Do not use an IO plugin limited to another task type for an ordinary generative model. If precise patches to a pinned version are necessary, verify class/function signatures and fail startup on mismatch. [vLLM plugin documentation](https://docs.vllm.ai/en/stable/design/plugin_system/)
+
+For llama.cpp, pin the source revision, preserve a reproducible patch/build recipe and verify source hashes before patching. Trace GGUF loading, the visual projector, GGML tensor placement and sampler backends. Use device-to-device transfers and opaque visual-feature handles at native bindings; returning sampled IDs must not also copy logits, probabilities or features to CPU. Verify synchronization between custom CUDA work and GGML streams, and reject unsupported device sampler fallbacks.
 
 ## Text-path features that must not be missed
 
-- Use `skip_tokenizer_init` and `detokenize=False`: the engine consumes and returns token IDs. Also verify that model code and processors do not instantiate a tokenizer independently. [Engine arguments](https://docs.vllm.ai/en/latest/configuration/engine_args/)
+- For vLLM, use `skip_tokenizer_init` and `detokenize=False`: the engine consumes and returns token IDs. For llama.cpp, remove original tokenizer strings from serving GGUF metadata and use the native token-ID path. In both backends, verify that model code and processors do not instantiate a tokenizer independently. [vLLM engine arguments](https://docs.vllm.ai/en/latest/configuration/engine_args/)
 - Handle OpenAI-style messages, templates, image placeholders, tool text, and reasoning markers on the client. Ordinary plaintext chat endpoints must not bypass the protected gateway.
 - Equality between token IDs survives permutation. Features involving token strings, ordering, lexical analysis, regex, or JSON grammars need separate adaptation. Silently enabling the original tokenizer is not an adaptation.
 - Every speculative-decoding model, shared/nonshared embedding, proposal, accept/reject operation, cache, and stopping rule must use the same ID space. Different draft vocabularies require an explicit bridge. If not adapted, report that the optimization is unavailable.
